@@ -23,14 +23,12 @@ div[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── HTTP session ──────────────────────────────────────────────────────────────
 _S = requests.Session()
 _S.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0"})
 
 
 @st.cache_data(ttl=3600)
 def get_usd_ils() -> float:
-    """Bank of Israel → exchangerate-api → fallback 3.60"""
     try:
         url  = ("https://edge.boi.org.il/FusionEdgeServer/sdmx/v2/data/dataflow/"
                 "BOI.STATISTICS/EXR/1.0/RER_USD_ILS?format=json&lastNObservations=1")
@@ -42,8 +40,7 @@ def get_usd_ils() -> float:
     except Exception:
         pass
     try:
-        rate = _S.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=6
-                      ).json()["rates"]["ILS"]
+        rate = _S.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=6).json()["rates"]["ILS"]
         if 1.0 < float(rate) < 10.0:
             return round(float(rate), 4)
     except Exception:
@@ -52,28 +49,30 @@ def get_usd_ils() -> float:
 
 
 def _stooq(ticker: str) -> dict:
-    """
-    Fetch latest quote from Stooq — works from any cloud server, no API key.
-    Returns dict with keys: close, open (=day reference for daily chg).
-    """
-    url = f"https://stooq.com/q/l/?s={ticker.lower()}.us&f=sd2t2ohlcv&h&e=csv"
-    r   = _S.get(url, timeout=10)
+    # strip whitespace/special chars — fixes "IREN " → N/D bug
+    t   = ticker.strip().upper()
+    url = f"https://stooq.com/q/l/?s={t.lower()}.us&f=sd2t2ohlcv&h&e=csv"
+    r   = _S.get(url, timeout=12)
     df  = pd.read_csv(io.StringIO(r.text))
+    df.columns = df.columns.str.strip()
+
     if df.empty or "Close" not in df.columns:
-        raise ValueError(f"No data for {ticker}")
+        raise ValueError(f"No Close column for {t}: {list(df.columns)}")
+
+    close = pd.to_numeric(df["Close"].iloc[-1], errors="coerce")
+    open_ = pd.to_numeric(df["Open"].iloc[-1],  errors="coerce")
+
+    if pd.isna(close) or close <= 0:
+        raise ValueError(f"Invalid price for {t}: {df['Close'].iloc[-1]!r}")
+
     return {
-        "close": round(float(df["Close"].iloc[-1]), 2),
-        "open":  round(float(df["Open"].iloc[-1]),  2),
+        "close": round(float(close), 2),
+        "open":  round(float(open_) if not pd.isna(open_) else float(close), 2),
     }
 
 
 @st.cache_data(ttl=300)
 def get_prices(tickers: tuple) -> tuple:
-    """
-    Identical logic for every ticker.
-    cur  = day's Close
-    prev = day's Open  (standard intraday reference, same as broker daily P&L)
-    """
     prices, prev_prices = {t: 0.0 for t in tickers}, {t: 0.0 for t in tickers}
     for ticker in tickers:
         try:
@@ -97,9 +96,11 @@ def load_from_sheets():
         df = pd.DataFrame(ws.get_all_records())
         df["Shares"]  = pd.to_numeric(df["Shares"],  errors="coerce")
         df["AvgCost"] = pd.to_numeric(df["AvgCost"], errors="coerce")
+        # normalize tickers — removes spaces/hidden chars that cause Stooq to return N/D
+        df["Ticker"]  = df["Ticker"].astype(str).str.strip().str.upper()
         return df.dropna(subset=["Ticker", "Shares", "AvgCost"])
     except Exception as e:
-        st.warning(f"Google Sheets error: {e}")
+        st.warning(f"Google Sheets: {e}")
         return None
 
 
@@ -119,7 +120,7 @@ def main():
     with col_meta:
         usd_ils = st.number_input("USD / ILS", min_value=2.5, max_value=4.5,
                                   value=float(get_usd_ils()), step=0.0001, format="%.4f",
-                                  help="Auto from Bank of Israel. Override if needed.")
+                                  help="Auto: Bank of Israel. Override if needed.")
     st.divider()
 
     df = load_from_sheets()
@@ -162,28 +163,32 @@ def main():
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         cls = "metric-delta-up" if daily_chg >= 0 else "metric-delta-down"
-        st.markdown(f'''<div class="metric-card"><div class="metric-label">Portfolio Value (ILS)</div>
-            <div class="metric-value">&#8362;{total_ils:,.0f}</div>
-            <div class="{cls}">${abs(daily_chg):,.2f} ({daily_chg_p:+.2f}%)</div></div>''',
-            unsafe_allow_html=True)
+        st.markdown(f'''<div class="metric-card">
+<div class="metric-label">Portfolio Value (ILS)</div>
+<div class="metric-value">&#8362;{total_ils:,.0f}</div>
+<div class="{cls}">${abs(daily_chg):,.2f} ({daily_chg_p:+.2f}%)</div>
+</div>''', unsafe_allow_html=True)
     with c2:
-        st.markdown(f'''<div class="metric-card"><div class="metric-label">Portfolio Value (USD)</div>
-            <div class="metric-value">${total_usd:,.2f}</div>
-            <div class="metric-delta-up">{len(df)} positions</div></div>''',
-            unsafe_allow_html=True)
+        st.markdown(f'''<div class="metric-card">
+<div class="metric-label">Portfolio Value (USD)</div>
+<div class="metric-value">${total_usd:,.2f}</div>
+<div class="metric-delta-up">{len(df)} positions</div>
+</div>''', unsafe_allow_html=True)
     with c3:
         cls = "metric-delta-up" if total_pnl >= 0 else "metric-delta-down"
-        st.markdown(f'''<div class="metric-card"><div class="metric-label">Total P&amp;L</div>
-            <div class="metric-value">${total_pnl:+,.2f}</div>
-            <div class="{cls}">{total_pnl_p:+.2f}%</div></div>''',
-            unsafe_allow_html=True)
+        st.markdown(f'''<div class="metric-card">
+<div class="metric-label">Total P&amp;L</div>
+<div class="metric-value">${total_pnl:+,.2f}</div>
+<div class="{cls}">{total_pnl_p:+.2f}%</div>
+</div>''', unsafe_allow_html=True)
     with c4:
         color = "#3ecf8e" if daily_chg >= 0 else "#f56565"
         cls   = "metric-delta-up" if daily_chg >= 0 else "metric-delta-down"
-        st.markdown(f'''<div class="metric-card"><div class="metric-label">Daily Change (Open→Close)</div>
-            <div class="metric-value" style="color:{color}">${daily_chg:+,.2f}</div>
-            <div class="{cls}">{daily_chg_p:+.2f}%</div></div>''',
-            unsafe_allow_html=True)
+        st.markdown(f'''<div class="metric-card">
+<div class="metric-label">Daily Change</div>
+<div class="metric-value" style="color:{color}">${daily_chg:+,.2f}</div>
+<div class="{cls}">{daily_chg_p:+.2f}%</div>
+</div>''', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     COLORS = {"IREN": "#4fa8f5", "BMNR": "#a78bfa", "MSTR": "#f5c842"}
@@ -229,10 +234,10 @@ def main():
                     "Day Chg ($)","Day Chg (%)","P&L ($)","P&L (%)","Weight (%)"]
     for col in ["Avg Cost ($)","Current ($)","Value (USD)","Day Chg ($)","P&L ($)"]:
         disp[col] = disp[col].map(lambda x: f"${x:,.2f}")
-    disp["Value (ILS)"]  = disp["Value (ILS)"].map(lambda x: f"&#8362;{x:,.0f}")
-    disp["Day Chg (%)"]  = disp["Day Chg (%)"].map(lambda x: f"{x:+.2f}%" if pd.notna(x) else "N/A")
-    disp["P&L (%)"]      = disp["P&L (%)"].map(lambda x: f"{x:+.2f}%")
-    disp["Weight (%)"]   = disp["Weight (%)"].map(lambda x: f"{x:.1f}%")
+    disp["Value (ILS)"] = disp["Value (ILS)"].map(lambda x: f"&#8362;{x:,.0f}")
+    disp["Day Chg (%)"] = disp["Day Chg (%)"].map(lambda x: f"{x:+.2f}%" if pd.notna(x) else "N/A")
+    disp["P&L (%)"]     = disp["P&L (%)"].map(lambda x: f"{x:+.2f}%")
+    disp["Weight (%)"]  = disp["Weight (%)"].map(lambda x: f"{x:.1f}%")
     st.dataframe(disp, use_container_width=True, hide_index=True)
 
     t1, t2, t3 = st.columns(3)
@@ -241,7 +246,7 @@ def main():
     t3.metric("Day Change", f"${daily_chg:+,.2f}", f"{daily_chg_p:+.2f}%")
 
     st.divider()
-    st.caption("📡 Data: Stooq.com (no IP blocking) · USD/ILS: Bank of Israel · Cache: 5 min")
+    st.caption("📡 Stooq.com · Bank of Israel · Cache 5 min")
     if st.button("🔄 Refresh Now"):
         st.cache_data.clear()
         st.rerun()
