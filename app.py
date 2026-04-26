@@ -35,23 +35,60 @@ def get_usd_ils():
     return 3.65
 
 
+def fetch_price(ticker: str):
+    """Robust price fetch with multiple fallback methods."""
+    # Method 1: history 5d
+    try:
+        hist = yf.Ticker(ticker).history(period="5d")
+        if len(hist) >= 2:
+            return round(float(hist["Close"].iloc[-1]), 2), round(float(hist["Close"].iloc[-2]), 2)
+        if len(hist) == 1:
+            p = round(float(hist["Close"].iloc[-1]), 2)
+            return p, p
+    except:
+        pass
+
+    # Method 2: history 1mo
+    try:
+        hist = yf.Ticker(ticker).history(period="1mo")
+        if len(hist) >= 2:
+            return round(float(hist["Close"].iloc[-1]), 2), round(float(hist["Close"].iloc[-2]), 2)
+        if len(hist) == 1:
+            p = round(float(hist["Close"].iloc[-1]), 2)
+            return p, p
+    except:
+        pass
+
+    # Method 3: yf.download
+    try:
+        df = yf.download(ticker, period="5d", progress=False, auto_adjust=True)
+        if len(df) >= 2:
+            return round(float(df["Close"].iloc[-1]), 2), round(float(df["Close"].iloc[-2]), 2)
+        if len(df) == 1:
+            p = round(float(df["Close"].iloc[-1]), 2)
+            return p, p
+    except:
+        pass
+
+    # Method 4: fast_info
+    try:
+        info = yf.Ticker(ticker).fast_info
+        cur  = float(info.get("last_price") or 0)
+        prev = float(info.get("previous_close") or 0)
+        if cur > 0:
+            return round(cur, 2), round(prev, 2) if prev > 0 else round(cur, 2)
+    except:
+        pass
+
+    return 0.0, 0.0
+
+
 @st.cache_data(ttl=300)
 def get_prices(tickers: list):
     prices = {}
     prev_prices = {}
     for t in tickers:
-        try:
-            hist = yf.Ticker(t).history(period="5d")
-            if len(hist) >= 2:
-                prices[t]      = round(float(hist["Close"].iloc[-1]), 2)
-                prev_prices[t] = round(float(hist["Close"].iloc[-2]), 2)
-            elif len(hist) == 1:
-                prices[t]      = round(float(hist["Close"].iloc[-1]), 2)
-                prev_prices[t] = round(float(hist["Close"].iloc[-1]), 2)
-            else:
-                prices[t] = prev_prices[t] = 0.0
-        except:
-            prices[t] = prev_prices[t] = 0.0
+        prices[t], prev_prices[t] = fetch_price(t)
     return prices, prev_prices
 
 
@@ -101,10 +138,10 @@ def main():
     df = load_from_sheets()
     if df is None:
         df = default_portfolio()
-        st.info("Using default portfolio. Connect Google Sheets for live updates.")
+        st.info("Using default portfolio.")
 
     tickers = df["Ticker"].tolist()
-    with st.spinner("Loading live prices from Yahoo Finance..."):
+    with st.spinner("Loading live prices..."):
         prices, prev_prices = get_prices(tickers)
 
     df["CurrentPrice"] = df["Ticker"].map(prices)
@@ -120,7 +157,8 @@ def main():
         / df["PrevPrice"].replace(0, float("nan"))
         * 100
     ).round(2)
-    df["Weight"] = (df["ValueUSD"] / df["ValueUSD"].sum() * 100).round(1)
+    total_val = df["ValueUSD"].sum()
+    df["Weight"] = (df["ValueUSD"] / total_val * 100).round(1) if total_val else 0
 
     total_usd   = df["ValueUSD"].sum()
     total_ils   = df["ValueILS"].sum()
@@ -131,10 +169,14 @@ def main():
     prev_total  = total_usd - daily_chg
     daily_chg_p = (daily_chg / prev_total * 100) if prev_total else 0
 
+    # Warn about tickers with no price
+    failed = [t for t in tickers if prices.get(t, 0) == 0]
+    if failed:
+        st.warning(f"Could not fetch price for: {', '.join(failed)} — check ticker symbol or try refreshing.")
+
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        arrow = "up" if daily_chg >= 0 else "down"
-        cls   = "metric-delta-up" if daily_chg >= 0 else "metric-delta-down"
+        cls = "metric-delta-up" if daily_chg >= 0 else "metric-delta-down"
         st.markdown(f"""<div class="metric-card">
             <div class="metric-label">Portfolio Value (ILS)</div>
             <div class="metric-value">₪{total_ils:,.0f}</div>
@@ -188,9 +230,10 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
 
     with ch2:
+        pie_df = df[df["ValueUSD"] > 0]
         fig2 = go.Figure(go.Pie(
-            labels=df["Ticker"], values=df["ValueUSD"].round(2), hole=0.62,
-            marker_colors=[get_color(t) for t in df["Ticker"]],
+            labels=pie_df["Ticker"], values=pie_df["ValueUSD"].round(2), hole=0.62,
+            marker_colors=[get_color(t) for t in pie_df["Ticker"]],
             marker_line=dict(color="#0d0e10", width=3),
             textinfo="label+percent", textfont=dict(color="#e2e4ef", size=11),
         ))
@@ -231,10 +274,10 @@ def main():
     ]
     for col in ["Avg Cost ($)", "Current Price ($)", "Value (USD)", "Daily Chg ($)", "P&L ($)"]:
         display_df[col] = display_df[col].map(lambda x: f"${x:,.2f}")
-    display_df["Value (ILS)"]   = display_df["Value (ILS)"].map(lambda x: f"₪{x:,.0f}")
-    display_df["Daily Chg (%)"] = display_df["Daily Chg (%)"].map(lambda x: f"{x:+.2f}%")
-    display_df["P&L (%)"]       = display_df["P&L (%)"].map(lambda x: f"{x:+.2f}%")
-    display_df["Weight (%)"]    = display_df["Weight (%)"].map(lambda x: f"{x:.1f}%")
+    display_df["Value (ILS)"]    = display_df["Value (ILS)"].map(lambda x: f"₪{x:,.0f}")
+    display_df["Daily Chg (%)"]  = display_df["Daily Chg (%)"].map(lambda x: f"{x:+.2f}%" if pd.notna(x) else "N/A")
+    display_df["P&L (%)"]        = display_df["P&L (%)"].map(lambda x: f"{x:+.2f}%")
+    display_df["Weight (%)"]     = display_df["Weight (%)"].map(lambda x: f"{x:.1f}%")
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
     t1, t2, t3 = st.columns(3)
