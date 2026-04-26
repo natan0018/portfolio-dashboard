@@ -165,24 +165,24 @@ def load_dca_from_sheets():
         creds = dict(st.secrets["gcp_service_account"])
         scopes = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
         gc = gspread.authorize(service_account.Credentials.from_service_account_info(creds, scopes=scopes))
-        df = pd.DataFrame(gc.open_by_key(st.secrets["sheet_id"]).worksheet("DCA").get_all_records())
+        sh = gc.open_by_key(st.secrets["sheet_id"])
+        # Try exact name "DCA", fallback to first sheet containing "dca"
+        try:
+            ws = sh.worksheet("DCA")
+        except Exception:
+            names = [w.title for w in sh.worksheets()]
+            match = next((n for n in names if n.strip().upper() == "DCA"), None)
+            if match:
+                ws = sh.worksheet(match)
+            else:
+                return pd.DataFrame(columns=["Date","Amount","Note","_error"]), f"Sheet 'DCA' not found. Available: {names}"
+        df = pd.DataFrame(ws.get_all_records())
         df["Date"]   = pd.to_datetime(df["Date"], errors="coerce")
         df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
-        return df.dropna(subset=["Date","Amount"])
-    except Exception:
-        return pd.DataFrame(columns=["Date","Amount","Note"])
+        return df.dropna(subset=["Date","Amount"]), None
+    except Exception as e:
+        return pd.DataFrame(columns=["Date","Amount","Note"]), str(e)
 
-
-def default_portfolio():
-    return pd.DataFrame([
-        {"Ticker":"IREN", "Shares":86.289,   "AvgCost":41.87},
-        {"Ticker":"BMNR", "Shares":227.9826, "AvgCost":19.44},
-        {"Ticker":"MSTR", "Shares":19.0,     "AvgCost":136.17},
-    ])
-
-
-def pct_color(v):
-    if v is None or (isinstance(v, float) and pd.isna(v)): return ""
     return "#3ecf8e" if v >= 0 else "#f56565"
 
 
@@ -467,7 +467,9 @@ def main():
     # ── TAB 4: DCA ────────────────────────────────────────────────────────────
     with tab4:
         st.markdown("### Annual DCA")
-        dca_df = load_dca_from_sheets()
+        dca_df, dca_err = load_dca_from_sheets()
+        if dca_err:
+            st.error(f"DCA sheet error: {dca_err}")
 
         if dca_df.empty:
             st.info("""**Setup required:** Add a sheet named **DCA** to your Google Sheets with these columns:
