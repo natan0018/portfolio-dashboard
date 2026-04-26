@@ -70,7 +70,7 @@ def get_prices(tickers: list):
 @st.cache_data(ttl=60)
 def load_from_sheets():
     try:
-        creds_dict = json.loads(st.secrets["gcp_service_account"])
+        creds_dict = dict(st.secrets["gcp_service_account"])
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
