@@ -342,7 +342,7 @@ def main():
             st.warning("No historical data available.")
         else:
             fig_c = go.Figure()
-            x_axis = port_hist.index.tz_convert("US/Eastern") if hasattr(port_hist.index,"tz_convert") else port_hist.index
+            x_axis = port_hist.index
 
             if view_sel == "% Change":
                 base = port_hist.iloc[0]
@@ -355,7 +355,7 @@ def main():
                     meta = INDEX_META[idx_key]
                     idx_hist = get_history(meta["yf"], p_range, p_interval)
                     if not idx_hist.empty:
-                        idx_x = idx_hist.index.tz_convert("US/Eastern") if hasattr(idx_hist.index,"tz_convert") else idx_hist.index
+                        idx_x = idx_hist.index
                         idx_y = (idx_hist / idx_hist.iloc[0] - 1) * 100
                         fig_c.add_trace(go.Scatter(x=idx_x, y=idx_y, name=meta["label"],
                             line=dict(color=meta["color"], width=1.8, dash="dot"),
@@ -372,7 +372,7 @@ def main():
                         meta = INDEX_META[idx_key]
                         idx_hist = get_history(meta["yf"], p_range, p_interval)
                         if not idx_hist.empty:
-                            idx_x = idx_hist.index.tz_convert("US/Eastern") if hasattr(idx_hist.index,"tz_convert") else idx_hist.index
+                            idx_x = idx_hist.index
                             idx_y = (idx_hist / idx_hist.iloc[0] - 1) * 100
                             fig_c.add_trace(go.Scatter(x=idx_x, y=idx_y, name=meta["label"],
                                 line=dict(color=meta["color"], width=1.8, dash="dot"),
