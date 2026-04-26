@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import yfinance as yf
 import gspread
 import pandas as pd
@@ -9,15 +9,15 @@ from datetime import datetime, date
 import json
 import time
 
-# ─── PAGE CONFIG ────────────────────────────────────────────────────────────
+# â”€â”€â”€ PAGE CONFIG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 st.set_page_config(
     page_title="Portfolio Dashboard",
-    page_icon="📈",
+    page_icon="ðŸ“ˆ",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# ─── DARK THEME CSS ─────────────────────────────────────────────────────────
+# â”€â”€â”€ DARK THEME CSS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300..700&family=JetBrains+Mono:wght@400;600&display=swap');
@@ -40,7 +40,7 @@ div[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─── USD/ILS RATE ────────────────────────────────────────────────────────────
+# â”€â”€â”€ USD/ILS RATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @st.cache_data(ttl=3600)
 def get_usd_ils():
     try:
@@ -50,7 +50,7 @@ def get_usd_ils():
     except:
         return 3.65
 
-# ─── FETCH LIVE PRICES ───────────────────────────────────────────────────────
+# â”€â”€â”€ FETCH LIVE PRICES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @st.cache_data(ttl=300)  # cache 5 min
 def get_prices(tickers: list):
     prices = {}
@@ -66,7 +66,7 @@ def get_prices(tickers: list):
             prev_prices[t] = 0.0
     return prices, prev_prices
 
-# ─── LOAD PORTFOLIO FROM GOOGLE SHEETS ──────────────────────────────────────
+# â”€â”€â”€ LOAD PORTFOLIO FROM GOOGLE SHEETS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @st.cache_data(ttl=60)
 def load_from_sheets():
     try:
@@ -87,10 +87,10 @@ def load_from_sheets():
         df["AvgCost"] = pd.to_numeric(df["AvgCost"], errors="coerce")
         return df.dropna(subset=["Ticker", "Shares", "AvgCost"])
     except Exception as e:
-        st.warning(f"⚠️ לא ניתן לטעון מ-Google Sheets: {e}. משתמש בנתונים קשיחים.")
+        st.warning(f"âš ï¸ ×œ× × ×™×ª×Ÿ ×œ×˜×¢×•×Ÿ ×ž-Google Sheets: {e}. ×ž×©×ª×ž×© ×‘× ×ª×•× ×™× ×§×©×™×—×™×.")
         return None
 
-# ─── FALLBACK — HARDCODED (Blink data from 24 Apr 2026) ─────────────────────
+# â”€â”€â”€ FALLBACK â€” HARDCODED (Blink data from 24 Apr 2026) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def default_portfolio():
     return pd.DataFrame([
         {"Ticker": "IREN",  "Shares": 86.289,    "AvgCost": 41.87,  "Platform": "Blink"},
@@ -98,16 +98,16 @@ def default_portfolio():
         {"Ticker": "MSTR",  "Shares": 19.0,      "AvgCost": 136.17, "Platform": "Blink"},
     ])
 
-# ─── MAIN ────────────────────────────────────────────────────────────────────
+# â”€â”€â”€ MAIN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def main():
     # Header
     col_title, col_meta = st.columns([3, 1])
     with col_title:
-        st.markdown("## 📈 Portfolio Dashboard")
-        st.caption(f"עדכון אחרון: {datetime.now().strftime('%d/%m/%Y %H:%M:%S IST')}")
+        st.markdown("## ðŸ“ˆ Portfolio Dashboard")
+        st.caption(f"×¢×“×›×•×Ÿ ××—×¨×•×Ÿ: {datetime.now().strftime('%d/%m/%Y %H:%M:%S IST')}")
     with col_meta:
         usd_ils = get_usd_ils()
-        st.metric("USD/ILS", f"₪{usd_ils:.3f}")
+        st.metric("USD/ILS", f"â‚ª{usd_ils:.3f}")
 
     st.divider()
 
@@ -115,11 +115,11 @@ def main():
     df = load_from_sheets()
     if df is None:
         df = default_portfolio()
-        st.info("📋 מציג פורטפוליו ברירת מחדל (Blink · 24 Apr 2026). חבר Google Sheets לעדכון אוטומטי.")
+        st.info("ðŸ“‹ ×ž×¦×™×’ ×¤×•×¨×˜×¤×•×œ×™×• ×‘×¨×™×¨×ª ×ž×—×“×œ (Blink Â· 24 Apr 2026). ×—×‘×¨ Google Sheets ×œ×¢×“×›×•×Ÿ ××•×˜×•×ž×˜×™.")
 
     # Fetch live prices
     tickers = df["Ticker"].tolist()
-    with st.spinner("🔄 טוען מחירים חיים מ-Yahoo Finance..."):
+    with st.spinner("ðŸ”„ ×˜×•×¢×Ÿ ×ž×—×™×¨×™× ×—×™×™× ×ž-Yahoo Finance..."):
         prices, prev_prices = get_prices(tickers)
 
     # Enrich dataframe
@@ -142,42 +142,42 @@ def main():
     daily_chg   = df["DailyChgUSD"].sum()
     daily_chg_p = daily_chg / (total_usd - daily_chg) * 100
 
-    # ── KPI CARDS ────────────────────────────────────────────────────────────
+    # â”€â”€ KPI CARDS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown(f"""<div class="metric-card">
-            <div class="metric-label">שווי תיק (₪)</div>
-            <div class="metric-value">₪{total_ils:,.0f}</div>
+            <div class="metric-label">×©×•×•×™ ×ª×™×§ (â‚ª)</div>
+            <div class="metric-value">â‚ª{total_ils:,.0f}</div>
             <div class="{'metric-delta-up' if daily_chg>=0 else 'metric-delta-down'}">
-                {'▲' if daily_chg>=0 else '▼'} ${abs(daily_chg):,.2f} יומי ({daily_chg_p:+.2f}%)
+                {'â–²' if daily_chg>=0 else 'â–¼'} ${abs(daily_chg):,.2f} ×™×•×ž×™ ({daily_chg_p:+.2f}%)
             </div>
         </div>""", unsafe_allow_html=True)
     with c2:
         st.markdown(f"""<div class="metric-card">
-            <div class="metric-label">שווי תיק (USD)</div>
+            <div class="metric-label">×©×•×•×™ ×ª×™×§ (USD)</div>
             <div class="metric-value">${total_usd:,.2f}</div>
-            <div class="metric-delta-up">{len(df)} פוזיציות פתוחות</div>
+            <div class="metric-delta-up">{len(df)} ×¤×•×–×™×¦×™×•×ª ×¤×ª×•×—×•×ª</div>
         </div>""", unsafe_allow_html=True)
     with c3:
         st.markdown(f"""<div class="metric-card">
-            <div class="metric-label">רווח ממועד קנייה</div>
+            <div class="metric-label">×¨×•×•×— ×ž×ž×•×¢×“ ×§× ×™×™×”</div>
             <div class="metric-value">${total_pnl:+,.2f}</div>
             <div class="{'metric-delta-up' if total_pnl>=0 else 'metric-delta-down'}">
-                {'▲' if total_pnl>=0 else '▼'} {total_pnl_p:+.2f}% על עלות
+                {'â–²' if total_pnl>=0 else 'â–¼'} {total_pnl_p:+.2f}% ×¢×œ ×¢×œ×•×ª
             </div>
         </div>""", unsafe_allow_html=True)
     with c4:
         st.markdown(f"""<div class="metric-card">
-            <div class="metric-label">שינוי יומי (USD)</div>
+            <div class="metric-label">×©×™× ×•×™ ×™×•×ž×™ (USD)</div>
             <div class="metric-value" style="color:{'#3ecf8e' if daily_chg>=0 else '#f56565'}">${daily_chg:+,.2f}</div>
             <div class="{'metric-delta-up' if daily_chg>=0 else 'metric-delta-down'}">
-                {daily_chg_p:+.2f}% מאתמול
+                {daily_chg_p:+.2f}% ×ž××ª×ž×•×œ
             </div>
         </div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── CHARTS ───────────────────────────────────────────────────────────────
+    # â”€â”€ CHARTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     COLORS = {"IREN": "#4fa8f5", "BMNR": "#a78bfa", "MSTR": "#f5c842"}
     def get_color(ticker): return COLORS.get(ticker, "#6b6f82")
 
@@ -194,7 +194,7 @@ def main():
             textposition="outside",
         ))
         fig_bar.update_layout(
-            title="שינוי יומי לפי מניה ($)",
+            title="×©×™× ×•×™ ×™×•×ž×™ ×œ×¤×™ ×ž× ×™×” ($)",
             paper_bgcolor="#13151a", plot_bgcolor="#13151a",
             font=dict(color="#9ca3af", family="Inter"),
             title_font=dict(color="#e2e4ef", size=13),
@@ -218,7 +218,7 @@ def main():
             textfont=dict(color="#e2e4ef", size=11),
         ))
         fig_pie.update_layout(
-            title="הקצאת תיק",
+            title="×”×§×¦××ª ×ª×™×§",
             paper_bgcolor="#13151a", plot_bgcolor="#13151a",
             font=dict(color="#9ca3af", family="Inter"),
             title_font=dict(color="#e2e4ef", size=13),
@@ -239,7 +239,7 @@ def main():
             textposition="outside",
         ))
         fig_pnl.update_layout(
-            title="רווח ממועד קנייה ($)",
+            title="×¨×•×•×— ×ž×ž×•×¢×“ ×§× ×™×™×” ($)",
             paper_bgcolor="#13151a", plot_bgcolor="#13151a",
             font=dict(color="#9ca3af", family="Inter"),
             title_font=dict(color="#e2e4ef", size=13),
@@ -251,38 +251,39 @@ def main():
         )
         st.plotly_chart(fig_pnl, use_container_width=True)
 
-    # ── TABLE ─────────────────────────────────────────────────────────────────
-    st.markdown("### פוזיציות פתוחות")
+    # â”€â”€ TABLE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    st.markdown("### ×¤×•×–×™×¦×™×•×ª ×¤×ª×•×—×•×ª")
     display_df = df[[
         "Ticker", "Shares", "AvgCost", "CurrentPrice",
         "ValueUSD", "ValueILS", "DailyChgUSD", "DailyChgPct",
         "PnL_USD", "PnL_Pct", "Weight"
     ]].copy()
     display_df.columns = [
-        "מניה", "מניות", "עלות ממוצעת ($)", "מחיר נוכחי ($)",
-        "שווי (USD)", "שווי (₪)", "שינוי יומי ($)", "שינוי יומי (%)",
-        "רווח כולל ($)", "רווח כולל (%)", "משקל (%)"
+        "×ž× ×™×”", "×ž× ×™×•×ª", "×¢×œ×•×ª ×ž×ž×•×¦×¢×ª ($)", "×ž×—×™×¨ × ×•×›×—×™ ($)",
+        "×©×•×•×™ (USD)", "×©×•×•×™ (â‚ª)", "×©×™× ×•×™ ×™×•×ž×™ ($)", "×©×™× ×•×™ ×™×•×ž×™ (%)",
+        "×¨×•×•×— ×›×•×œ×œ ($)", "×¨×•×•×— ×›×•×œ×œ (%)", "×ž×©×§×œ (%)"
     ]
     # Format
-    for col in ["עלות ממוצעת ($)", "מחיר נוכחי ($)", "שווי (USD)", "שינוי יומי ($)", "רווח כולל ($)"]:
+    for col in ["×¢×œ×•×ª ×ž×ž×•×¦×¢×ª ($)", "×ž×—×™×¨ × ×•×›×—×™ ($)", "×©×•×•×™ (USD)", "×©×™× ×•×™ ×™×•×ž×™ ($)", "×¨×•×•×— ×›×•×œ×œ ($)"]:
         display_df[col] = display_df[col].map(lambda x: f"${x:,.2f}")
-    display_df["שווי (₪)"] = display_df["שווי (₪)"].map(lambda x: f"₪{x:,.0f}")
-    for col in ["שינוי יומי (%)", "רווח כולל (%)", "משקל (%)"]:
+    display_df["×©×•×•×™ (â‚ª)"] = display_df["×©×•×•×™ (â‚ª)"].map(lambda x: f"â‚ª{x:,.0f}")
+    for col in ["×©×™× ×•×™ ×™×•×ž×™ (%)", "×¨×•×•×— ×›×•×œ×œ (%)", "×ž×©×§×œ (%)"]:
         display_df[col] = display_df[col].map(lambda x: f"{x:+.2f}%")
 
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
     # totals
     t1, t2, t3 = st.columns(3)
-    t1.metric("סה״כ שווי (USD)", f"${total_usd:,.2f}")
-    t2.metric("סה״כ שווי (₪)",  f"₪{total_ils:,.0f}")
-    t3.metric("סה״כ שינוי יומי", f"${daily_chg:+,.2f}", f"{daily_chg_p:+.2f}%")
+    t1.metric("×¡×”×´×› ×©×•×•×™ (USD)", f"${total_usd:,.2f}")
+    t2.metric("×¡×”×´×› ×©×•×•×™ (â‚ª)",  f"â‚ª{total_ils:,.0f}")
+    t3.metric("×¡×”×´×› ×©×™× ×•×™ ×™×•×ž×™", f"${daily_chg:+,.2f}", f"{daily_chg_p:+.2f}%")
 
-    # ── AUTO REFRESH ──────────────────────────────────────────────────────────
+    # â”€â”€ AUTO REFRESH â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     st.divider()
-    st.caption("⏱ נתונים מתרעננים כל 5 דקות אוטומטית · Yahoo Finance · USD/ILS מתעדכן כל שעה")
-    if st.button("🔄 רענן עכשיו"):
+    st.caption("â± × ×ª×•× ×™× ×ž×ª×¨×¢× × ×™× ×›×œ 5 ×“×§×•×ª ××•×˜×•×ž×˜×™×ª Â· Yahoo Finance Â· USD/ILS ×ž×ª×¢×“×›×Ÿ ×›×œ ×©×¢×”")
+    if st.button("ðŸ”„ ×¨×¢× ×Ÿ ×¢×›×©×™×•"):
         st.cache_data.clear()
         st.rerun()
 
 main()
+
