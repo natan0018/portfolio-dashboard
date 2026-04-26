@@ -80,7 +80,7 @@ def load_from_sheets():
         )
         gc = gspread.authorize(credentials)
         sh = gc.open_by_key(st.secrets["sheet_id"])
-        ws = sh.worksheet("Portfolio")
+        ws = sh.worksheet("Sheet1")
         data = ws.get_all_records()
         df = pd.DataFrame(data)
         df["Shares"] = pd.to_numeric(df["Shares"], errors="coerce")
