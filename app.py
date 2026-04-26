@@ -3,7 +3,7 @@ import gspread
 import pandas as pd
 import plotly.graph_objects as go
 from google.oauth2 import service_account
-from datetime import datetime
+from datetime import datetime, date, timezone
 import requests
 import io
 
@@ -17,6 +17,7 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .metric-card { background: #13151a; border: 1px solid #2a2d38; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 0.5rem; }
 .metric-label { font-size: 0.7rem; color: #6b6f82; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.4rem; }
 .metric-value { font-family: 'JetBrains Mono', monospace; font-size: 1.6rem; font-weight: 600; color: #e2e4ef; }
+.metric-sub { font-size: 0.75rem; color: #6b6f82; }
 .metric-delta-up   { font-size: 0.75rem; color: #3ecf8e; font-weight: 600; }
 .metric-delta-down { font-size: 0.75rem; color: #f56565; font-weight: 600; }
 div[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
@@ -24,7 +25,80 @@ div[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
 """, unsafe_allow_html=True)
 
 _S = requests.Session()
-_S.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0"})
+_S.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0",
+    "Accept-Language": "en-US,en;q=0.9",
+})
+
+
+@st.cache_resource
+def _yf_session():
+    """Yahoo Finance authenticated session for previousClose."""
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0",
+        "Accept": "text/html,application/xhtml+xml,*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
+    s.get("https://fc.yahoo.com", timeout=6)
+    crumb = s.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=6).text.strip()
+    return s, crumb
+
+
+@st.cache_data(ttl=300)
+def get_prices(tickers: tuple) -> tuple:
+    """
+    Returns (prices, prev_prices, market_open_today).
+    - prices        : last close from Stooq
+    - prev_prices   : yesterday's close from Yahoo Finance (used ONLY when market is open today)
+    - market_open   : True if last Stooq trade date == today (UTC)
+    When market is CLOSED today → prev_price = current price → daily change = 0
+    """
+    prices, prev_prices = {t: 0.0 for t in tickers}, {t: 0.0 for t in tickers}
+    today_utc = datetime.now(timezone.utc).date()
+    market_open = False
+
+    # ── Stooq: current price + detect if market open today ────────────────────
+    for ticker in tickers:
+        try:
+            t   = ticker.strip().upper()
+            url = f"https://stooq.com/q/l/?s={t.lower()}.us&f=sd2t2ohlcv&h&e=csv"
+            r   = _S.get(url, timeout=12)
+            df  = pd.read_csv(io.StringIO(r.text))
+            df.columns = df.columns.str.strip()
+            close = pd.to_numeric(df["Close"].iloc[-1], errors="coerce")
+            if not pd.isna(close) and close > 0:
+                prices[ticker] = round(float(close), 2)
+                last_date = pd.to_datetime(df["Date"].iloc[-1]).date()
+                if last_date == today_utc:
+                    market_open = True
+        except Exception:
+            pass
+
+    if market_open:
+        # Market is open today → fetch real previous close from Yahoo Finance
+        try:
+            yf_s, crumb = _yf_session()
+            symbols = ",".join([t.strip().upper() for t in tickers])
+            url  = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbols}&crumb={crumb}"
+            data = yf_s.get(url, timeout=10).json()
+            for q in data["quoteResponse"]["result"]:
+                sym  = q.get("symbol", "").strip().upper()
+                prev = q.get("regularMarketPreviousClose", 0)
+                if sym in prev_prices and prev and prev > 0:
+                    prev_prices[sym] = round(float(prev), 2)
+        except Exception:
+            pass
+        # Fallback: if Yahoo failed for a ticker, prev = current (no change shown)
+        for t in tickers:
+            if prev_prices[t] == 0.0:
+                prev_prices[t] = prices[t]
+    else:
+        # Market is CLOSED today → no change occurred today
+        for t in tickers:
+            prev_prices[t] = prices[t]  # change = 0
+
+    return prices, prev_prices, market_open
 
 
 @st.cache_data(ttl=3600)
@@ -48,42 +122,6 @@ def get_usd_ils() -> float:
     return 3.60
 
 
-def _stooq(ticker: str) -> dict:
-    # strip whitespace/special chars — fixes "IREN " → N/D bug
-    t   = ticker.strip().upper()
-    url = f"https://stooq.com/q/l/?s={t.lower()}.us&f=sd2t2ohlcv&h&e=csv"
-    r   = _S.get(url, timeout=12)
-    df  = pd.read_csv(io.StringIO(r.text))
-    df.columns = df.columns.str.strip()
-
-    if df.empty or "Close" not in df.columns:
-        raise ValueError(f"No Close column for {t}: {list(df.columns)}")
-
-    close = pd.to_numeric(df["Close"].iloc[-1], errors="coerce")
-    open_ = pd.to_numeric(df["Open"].iloc[-1],  errors="coerce")
-
-    if pd.isna(close) or close <= 0:
-        raise ValueError(f"Invalid price for {t}: {df['Close'].iloc[-1]!r}")
-
-    return {
-        "close": round(float(close), 2),
-        "open":  round(float(open_) if not pd.isna(open_) else float(close), 2),
-    }
-
-
-@st.cache_data(ttl=300)
-def get_prices(tickers: tuple) -> tuple:
-    prices, prev_prices = {t: 0.0 for t in tickers}, {t: 0.0 for t in tickers}
-    for ticker in tickers:
-        try:
-            q = _stooq(ticker)
-            prices[ticker]      = q["close"]
-            prev_prices[ticker] = q["open"]
-        except Exception:
-            pass
-    return prices, prev_prices
-
-
 @st.cache_data(ttl=60)
 def load_from_sheets():
     try:
@@ -96,7 +134,6 @@ def load_from_sheets():
         df = pd.DataFrame(ws.get_all_records())
         df["Shares"]  = pd.to_numeric(df["Shares"],  errors="coerce")
         df["AvgCost"] = pd.to_numeric(df["AvgCost"], errors="coerce")
-        # normalize tickers — removes spaces/hidden chars that cause Stooq to return N/D
         df["Ticker"]  = df["Ticker"].astype(str).str.strip().str.upper()
         return df.dropna(subset=["Ticker", "Shares", "AvgCost"])
     except Exception as e:
@@ -120,7 +157,7 @@ def main():
     with col_meta:
         usd_ils = st.number_input("USD / ILS", min_value=2.5, max_value=4.5,
                                   value=float(get_usd_ils()), step=0.0001, format="%.4f",
-                                  help="Auto: Bank of Israel. Override if needed.")
+                                  help="Auto: Bank of Israel.")
     st.divider()
 
     df = load_from_sheets()
@@ -129,12 +166,17 @@ def main():
         st.info("Using default portfolio (Google Sheets unavailable).")
 
     tickers = tuple(df["Ticker"].tolist())
-    with st.spinner("Loading live prices from Stooq..."):
-        prices, prev_prices = get_prices(tickers)
+    with st.spinner("Loading prices..."):
+        prices, prev_prices, market_open = get_prices(tickers)
+
+    if market_open:
+        st.success("🟢 Market open — showing live daily change")
+    else:
+        st.info("🔴 Market closed — daily change: $0.00 (no trading today)")
 
     failed = [t for t in tickers if prices.get(t, 0.0) == 0.0]
     if failed:
-        st.error(f"Could not fetch: {', '.join(failed)}")
+        st.error(f"Could not fetch: {", ".join(failed)}")
 
     df["CurrentPrice"] = df["Ticker"].map(prices)
     df["PrevPrice"]    = df["Ticker"].map(prev_prices)
@@ -157,22 +199,23 @@ def main():
     total_cost  = df["CostBasisUSD"].sum()
     total_pnl_p = (total_pnl / total_cost * 100) if total_cost else 0.0
     daily_chg   = df["DailyChgUSD"].sum()
-    prev_total  = total_usd - daily_chg
-    daily_chg_p = (daily_chg / prev_total * 100) if prev_total else 0.0
+    daily_chg_p = (df["DailyChgUSD"].sum() / (total_usd - daily_chg) * 100) if (total_usd - daily_chg) != 0 else 0.0
+
+    day_label = "Daily Change" if market_open else "Daily Change (Closed)"
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         cls = "metric-delta-up" if daily_chg >= 0 else "metric-delta-down"
         st.markdown(f'''<div class="metric-card">
 <div class="metric-label">Portfolio Value (ILS)</div>
-<div class="metric-value">&#8362;{total_ils:,.0f}</div>
+<div class="metric-value">₪{total_ils:,.0f}</div>
 <div class="{cls}">${abs(daily_chg):,.2f} ({daily_chg_p:+.2f}%)</div>
 </div>''', unsafe_allow_html=True)
     with c2:
         st.markdown(f'''<div class="metric-card">
 <div class="metric-label">Portfolio Value (USD)</div>
 <div class="metric-value">${total_usd:,.2f}</div>
-<div class="metric-delta-up">{len(df)} positions</div>
+<div class="metric-sub">{len(df)} positions</div>
 </div>''', unsafe_allow_html=True)
     with c3:
         cls = "metric-delta-up" if total_pnl >= 0 else "metric-delta-down"
@@ -184,10 +227,12 @@ def main():
     with c4:
         color = "#3ecf8e" if daily_chg >= 0 else "#f56565"
         cls   = "metric-delta-up" if daily_chg >= 0 else "metric-delta-down"
+        chg_display = f"${daily_chg:+,.2f}" if market_open else "$0.00"
+        pct_display = f"{daily_chg_p:+.2f}%" if market_open else "Market Closed"
         st.markdown(f'''<div class="metric-card">
-<div class="metric-label">Daily Change</div>
-<div class="metric-value" style="color:{color}">${daily_chg:+,.2f}</div>
-<div class="{cls}">{daily_chg_p:+.2f}%</div>
+<div class="metric-label">{day_label}</div>
+<div class="metric-value" style="color:{color}">{chg_display}</div>
+<div class="{cls}">{pct_display}</div>
 </div>''', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -196,12 +241,14 @@ def main():
 
     ch1, ch2, ch3 = st.columns([2, 1, 1])
     with ch1:
+        bar_vals = df["DailyChgUSD"] if market_open else pd.Series([0.0]*len(df), index=df.index)
         fig = go.Figure(go.Bar(
-            x=df["Ticker"], y=df["DailyChgUSD"],
-            marker_color=[("#3ecf8e" if v >= 0 else "#f56565") for v in df["DailyChgUSD"]],
+            x=df["Ticker"], y=bar_vals,
+            marker_color=[("#3ecf8e" if v >= 0 else "#f56565") for v in bar_vals],
             marker_line_width=0,
-            text=[f"${v:+,.2f}" for v in df["DailyChgUSD"]], textposition="outside"))
-        fig.update_layout(title="Daily Change ($)", paper_bgcolor="#13151a", plot_bgcolor="#13151a",
+            text=[f"${v:+,.2f}" for v in bar_vals], textposition="outside"))
+        title_txt = "Daily Change ($)" if market_open else "Daily Change — Market Closed"
+        fig.update_layout(title=title_txt, paper_bgcolor="#13151a", plot_bgcolor="#13151a",
             font=dict(color="#9ca3af"), title_font=dict(color="#e2e4ef", size=13),
             margin=dict(t=40,b=20,l=20,r=20), height=260,
             xaxis=dict(gridcolor="#2a2d38"), yaxis=dict(gridcolor="#2a2d38", tickprefix="$"))
@@ -234,21 +281,25 @@ def main():
                     "Day Chg ($)","Day Chg (%)","P&L ($)","P&L (%)","Weight (%)"]
     for col in ["Avg Cost ($)","Current ($)","Value (USD)","Day Chg ($)","P&L ($)"]:
         disp[col] = disp[col].map(lambda x: f"${x:,.2f}")
-    disp["Value (ILS)"] = disp["Value (ILS)"].map(lambda x: f"&#8362;{x:,.0f}")
-    disp["Day Chg (%)"] = disp["Day Chg (%)"].map(lambda x: f"{x:+.2f}%" if pd.notna(x) else "N/A")
+    disp["Value (ILS)"] = disp["Value (ILS)"].map(lambda x: f"₪{x:,.0f}")
+    disp["Day Chg ($)"] = disp["Day Chg ($)"].map(lambda x: "$0.00" if not market_open else x)
+    disp["Day Chg (%)"] = disp["Day Chg (%)"].map(
+        lambda x: "Closed" if not market_open else (f"{x:+.2f}%" if pd.notna(x) else "N/A"))
     disp["P&L (%)"]     = disp["P&L (%)"].map(lambda x: f"{x:+.2f}%")
     disp["Weight (%)"]  = disp["Weight (%)"].map(lambda x: f"{x:.1f}%")
     st.dataframe(disp, use_container_width=True, hide_index=True)
 
     t1, t2, t3 = st.columns(3)
     t1.metric("Total (USD)", f"${total_usd:,.2f}")
-    t2.metric("Total (ILS)", f"&#8362;{total_ils:,.0f}")
-    t3.metric("Day Change", f"${daily_chg:+,.2f}", f"{daily_chg_p:+.2f}%")
+    t2.metric("Total (ILS)", f"₪{total_ils:,.0f}")
+    chg_str = f"${daily_chg:+,.2f}" if market_open else "$0.00"
+    t3.metric("Day Change", chg_str)
 
     st.divider()
-    st.caption("📡 Stooq.com · Bank of Israel · Cache 5 min")
+    st.caption("📡 Stooq (price) · Yahoo Finance (prev close) · Bank of Israel (FX) · Cache 5 min")
     if st.button("🔄 Refresh Now"):
         st.cache_data.clear()
+        st.cache_resource.clear()
         st.rerun()
 
 
