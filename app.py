@@ -5,9 +5,10 @@ import pandas as pd
 import plotly.graph_objects as go
 from google.oauth2 import service_account
 from datetime import datetime
+import requests
 import time
 
-st.set_page_config(page_title="Portfolio Dashboard", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Portfolio Dashboard", page_icon="chart_with_upwards_trend", layout="wide")
 
 st.markdown("""
 <style>
@@ -24,65 +25,81 @@ div[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
+# Manual price fallbacks for when Yahoo Finance API fails
+MANUAL_PRICES = {"IREN": 48.39}
+MANUAL_PREV_PRICES = {"IREN": 45.03}
+
 
 @st.cache_data(ttl=3600)
 def get_usd_ils():
+    try:
+        url = "https://edge.boi.org.il/FusionEdgeServer/sdmx/v2/data/dataflow/BOI.STATISTICS/EXR/1.0/RER_USD_ILS?format=json&lastNObservations=1"
+        r = requests.get(url, timeout=5)
+        data = r.json()
+        val = list(data["data"]["dataSets"][0]["series"].values())[0]["observations"]
+        rate = float(list(val.values())[0][0])
+        if rate > 0:
+            return round(rate, 4)
+    except:
+        pass
+    try:
+        r = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=5)
+        rate = r.json()["rates"]["ILS"]
+        if rate > 0:
+            return round(float(rate), 4)
+    except:
+        pass
     try:
         df = yf.download("USDILS=X", period="5d", progress=False, auto_adjust=True)
         if not df.empty:
             return round(float(df["Close"].iloc[-1]), 4)
     except:
         pass
-    return 3.65
+    return 2.99
+
+
+def fetch_single_price(ticker):
+    for period in ["5d", "1mo"]:
+        try:
+            df = yf.download(ticker, period=period, progress=False, auto_adjust=True, threads=False)
+            df = df.dropna()
+            if len(df) >= 2:
+                return round(float(df["Close"].iloc[-1]), 2), round(float(df["Close"].iloc[-2]), 2)
+            if len(df) == 1:
+                p = round(float(df["Close"].iloc[-1]), 2)
+                return p, p
+        except:
+            pass
+        time.sleep(0.3)
+    for period in ["5d", "1mo"]:
+        try:
+            hist = yf.Ticker(ticker).history(period=period).dropna(subset=["Close"])
+            if len(hist) >= 2:
+                return round(float(hist["Close"].iloc[-1]), 2), round(float(hist["Close"].iloc[-2]), 2)
+            if len(hist) == 1:
+                p = round(float(hist["Close"].iloc[-1]), 2)
+                return p, p
+        except:
+            pass
+        time.sleep(0.3)
+    try:
+        info = yf.Ticker(ticker).fast_info
+        cur  = float(info.get("last_price") or 0)
+        prev = float(info.get("previous_close") or cur)
+        if cur > 0:
+            return round(cur, 2), round(prev, 2)
+    except:
+        pass
+    if ticker in MANUAL_PRICES:
+        return MANUAL_PRICES[ticker], MANUAL_PREV_PRICES.get(ticker, MANUAL_PRICES[ticker])
+    return 0.0, 0.0
 
 
 @st.cache_data(ttl=300)
-def get_prices(tickers: list):
-    """Fetch all tickers in one batch call — most reliable method."""
-    prices = {t: 0.0 for t in tickers}
-    prev_prices = {t: 0.0 for t in tickers}
-
-    # Method 1: batch download all tickers at once
-    try:
-        symbols = " ".join(tickers)
-        df = yf.download(symbols, period="5d", progress=False,
-                         auto_adjust=True, threads=False, group_by="ticker")
-        for t in tickers:
-            try:
-                if len(tickers) == 1:
-                    closes = df["Close"].dropna()
-                else:
-                    closes = df[t]["Close"].dropna()
-                if len(closes) >= 2:
-                    prices[t]      = round(float(closes.iloc[-1]), 2)
-                    prev_prices[t] = round(float(closes.iloc[-2]), 2)
-                elif len(closes) == 1:
-                    prices[t]      = round(float(closes.iloc[-1]), 2)
-                    prev_prices[t] = round(float(closes.iloc[-1]), 2)
-            except:
-                pass
-    except:
-        pass
-
-    # Method 2: individual fallback for any ticker still at 0
+def get_prices(tickers):
+    prices, prev_prices = {}, {}
     for t in tickers:
-        if prices[t] == 0.0:
-            # try history() individually with a small delay
-            for period in ["5d", "1mo", "3mo"]:
-                try:
-                    time.sleep(0.5)
-                    hist = yf.Ticker(t).history(period=period)
-                    if len(hist) >= 2:
-                        prices[t]      = round(float(hist["Close"].iloc[-1]), 2)
-                        prev_prices[t] = round(float(hist["Close"].iloc[-2]), 2)
-                        break
-                    elif len(hist) == 1:
-                        prices[t]      = round(float(hist["Close"].iloc[-1]), 2)
-                        prev_prices[t] = round(float(hist["Close"].iloc[-1]), 2)
-                        break
-                except:
-                    continue
-
+        prices[t], prev_prices[t] = fetch_single_price(t)
     return prices, prev_prices
 
 
@@ -90,13 +107,8 @@ def get_prices(tickers: list):
 def load_from_sheets():
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
-        credentials = service_account.Credentials.from_service_account_info(
-            creds_dict, scopes=scopes
-        )
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        credentials = service_account.Credentials.from_service_account_info(creds_dict, scopes=scopes)
         gc = gspread.authorize(credentials)
         sh = gc.open_by_key(st.secrets["sheet_id"])
         ws = sh.worksheet("Sheet1")
@@ -124,24 +136,27 @@ def main():
         st.markdown("## Portfolio Dashboard")
         st.caption(f"Last update: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     with col_meta:
-        usd_ils = get_usd_ils()
-        st.metric("USD/ILS", f"{usd_ils:.3f}")
+        usd_ils_live = get_usd_ils()
+        usd_ils = st.number_input(
+            "USD/ILS", min_value=2.5, max_value=4.5,
+            value=float(usd_ils_live), step=0.0001, format="%.4f",
+            help="Auto from Bank of Israel. Override manually if needed."
+        )
 
     st.divider()
 
     df = load_from_sheets()
     if df is None:
         df = default_portfolio()
-        st.info("Using default portfolio.")
+        st.info("Using default portfolio (Google Sheets unavailable).")
 
     tickers = df["Ticker"].tolist()
     with st.spinner("Loading live prices..."):
         prices, prev_prices = get_prices(tickers)
 
-    # Warn about any failed tickers
     failed = [t for t in tickers if prices.get(t, 0) == 0]
     if failed:
-        st.warning(f"Could not fetch price for: {', '.join(failed)} — try refreshing.")
+        st.warning(f"Could not fetch: {', '.join(failed)}")
 
     df["CurrentPrice"] = df["Ticker"].map(prices)
     df["PrevPrice"]    = df["Ticker"].map(prev_prices)
@@ -155,7 +170,7 @@ def main():
         (df["CurrentPrice"] - df["PrevPrice"])
         / df["PrevPrice"].replace(0, float("nan")) * 100
     ).round(2)
-    total_val  = df["ValueUSD"].sum()
+    total_val   = df["ValueUSD"].sum()
     df["Weight"] = (df["ValueUSD"] / total_val * 100).round(1) if total_val else 0.0
 
     total_usd   = df["ValueUSD"].sum()
@@ -170,56 +185,33 @@ def main():
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         cls = "metric-delta-up" if daily_chg >= 0 else "metric-delta-down"
-        st.markdown(f"""<div class="metric-card">
-            <div class="metric-label">Portfolio Value (ILS)</div>
-            <div class="metric-value">₪{total_ils:,.0f}</div>
-            <div class="{cls}">${abs(daily_chg):,.2f} ({daily_chg_p:+.2f}%)</div>
-        </div>""", unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-label">Portfolio Value (ILS)</div><div class="metric-value">NIS{total_ils:,.0f}</div><div class="{cls}">${abs(daily_chg):,.2f} ({daily_chg_p:+.2f}%)</div></div>', unsafe_allow_html=True)
     with c2:
-        st.markdown(f"""<div class="metric-card">
-            <div class="metric-label">Portfolio Value (USD)</div>
-            <div class="metric-value">${total_usd:,.2f}</div>
-            <div class="metric-delta-up">{len(df)} positions</div>
-        </div>""", unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-label">Portfolio Value (USD)</div><div class="metric-value">${total_usd:,.2f}</div><div class="metric-delta-up">{len(df)} positions</div></div>', unsafe_allow_html=True)
     with c3:
         cls = "metric-delta-up" if total_pnl >= 0 else "metric-delta-down"
-        st.markdown(f"""<div class="metric-card">
-            <div class="metric-label">Total P&L</div>
-            <div class="metric-value">${total_pnl:+,.2f}</div>
-            <div class="{cls}">{total_pnl_p:+.2f}%</div>
-        </div>""", unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-label">Total P&L</div><div class="metric-value">${total_pnl:+,.2f}</div><div class="{cls}">{total_pnl_p:+.2f}%</div></div>', unsafe_allow_html=True)
     with c4:
         color = "#3ecf8e" if daily_chg >= 0 else "#f56565"
         cls   = "metric-delta-up" if daily_chg >= 0 else "metric-delta-down"
-        st.markdown(f"""<div class="metric-card">
-            <div class="metric-label">Daily Change (USD)</div>
-            <div class="metric-value" style="color:{color}">${daily_chg:+,.2f}</div>
-            <div class="{cls}">{daily_chg_p:+.2f}%</div>
-        </div>""", unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><div class="metric-label">Daily Change (USD)</div><div class="metric-value" style="color:{color}">${daily_chg:+,.2f}</div><div class="{cls}">{daily_chg_p:+.2f}%</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-
     COLORS = {"IREN": "#4fa8f5", "BMNR": "#a78bfa", "MSTR": "#f5c842"}
-    def get_color(t):
-        return COLORS.get(t, "#6b6f82")
+    def get_color(t): return COLORS.get(t, "#6b6f82")
 
     ch1, ch2, ch3 = st.columns([2, 1, 1])
-
     with ch1:
         fig = go.Figure(go.Bar(
             x=df["Ticker"], y=df["DailyChgUSD"],
             marker_color=[("#3ecf8e" if v >= 0 else "#f56565") for v in df["DailyChgUSD"]],
             marker_line_width=0,
-            text=[f"${v:+,.2f}" for v in df["DailyChgUSD"]],
-            textposition="outside",
+            text=[f"${v:+,.2f}" for v in df["DailyChgUSD"]], textposition="outside",
         ))
-        fig.update_layout(
-            title="Daily Change ($)", paper_bgcolor="#13151a", plot_bgcolor="#13151a",
+        fig.update_layout(title="Daily Change ($)", paper_bgcolor="#13151a", plot_bgcolor="#13151a",
             font=dict(color="#9ca3af"), title_font=dict(color="#e2e4ef", size=13),
             margin=dict(t=40, b=20, l=20, r=20), height=250,
-            xaxis=dict(gridcolor="#2a2d38"),
-            yaxis=dict(gridcolor="#2a2d38", tickprefix="$"),
-        )
+            xaxis=dict(gridcolor="#2a2d38"), yaxis=dict(gridcolor="#2a2d38", tickprefix="$"))
         st.plotly_chart(fig, use_container_width=True)
 
     with ch2:
@@ -231,11 +223,9 @@ def main():
                 marker_line=dict(color="#0d0e10", width=3),
                 textinfo="label+percent", textfont=dict(color="#e2e4ef", size=11),
             ))
-            fig2.update_layout(
-                title="Allocation", paper_bgcolor="#13151a", plot_bgcolor="#13151a",
+            fig2.update_layout(title="Allocation", paper_bgcolor="#13151a", plot_bgcolor="#13151a",
                 font=dict(color="#9ca3af"), title_font=dict(color="#e2e4ef", size=13),
-                margin=dict(t=40, b=10, l=10, r=10), height=250, showlegend=False,
-            )
+                margin=dict(t=40, b=10, l=10, r=10), height=250, showlegend=False)
             st.plotly_chart(fig2, use_container_width=True)
 
     with ch3:
@@ -243,45 +233,35 @@ def main():
             x=df["Ticker"], y=df["PnL_USD"],
             marker_color=[get_color(t) for t in df["Ticker"]],
             marker_line_width=0,
-            text=[f"${v:+,.0f}" for v in df["PnL_USD"]],
-            textposition="outside",
+            text=[f"${v:+,.0f}" for v in df["PnL_USD"]], textposition="outside",
         ))
-        fig3.update_layout(
-            title="P&L from Cost ($)", paper_bgcolor="#13151a", plot_bgcolor="#13151a",
+        fig3.update_layout(title="P&L from Cost ($)", paper_bgcolor="#13151a", plot_bgcolor="#13151a",
             font=dict(color="#9ca3af"), title_font=dict(color="#e2e4ef", size=13),
             margin=dict(t=40, b=20, l=20, r=20), height=250,
-            xaxis=dict(gridcolor="#2a2d38"),
-            yaxis=dict(gridcolor="#2a2d38", tickprefix="$"),
-        )
+            xaxis=dict(gridcolor="#2a2d38"), yaxis=dict(gridcolor="#2a2d38", tickprefix="$"))
         st.plotly_chart(fig3, use_container_width=True)
 
     st.markdown("### Open Positions")
-    display_df = df[[
-        "Ticker", "Shares", "AvgCost", "CurrentPrice",
-        "ValueUSD", "ValueILS", "DailyChgUSD", "DailyChgPct",
-        "PnL_USD", "PnL_Pct", "Weight"
-    ]].copy()
-    display_df.columns = [
-        "Ticker", "Shares", "Avg Cost ($)", "Current Price ($)",
-        "Value (USD)", "Value (ILS)", "Daily Chg ($)", "Daily Chg (%)",
-        "P&L ($)", "P&L (%)", "Weight (%)"
-    ]
-    for col in ["Avg Cost ($)", "Current Price ($)", "Value (USD)", "Daily Chg ($)", "P&L ($)"]:
+    display_df = df[["Ticker","Shares","AvgCost","CurrentPrice","ValueUSD","ValueILS",
+                      "DailyChgUSD","DailyChgPct","PnL_USD","PnL_Pct","Weight"]].copy()
+    display_df.columns = ["Ticker","Shares","Avg Cost ($)","Current Price ($)",
+                          "Value (USD)","Value (ILS)","Daily Chg ($)","Daily Chg (%)",
+                          "P&L ($)","P&L (%)","Weight (%)"]
+    for col in ["Avg Cost ($)","Current Price ($)","Value (USD)","Daily Chg ($)","P&L ($)"]:
         display_df[col] = display_df[col].map(lambda x: f"${x:,.2f}")
-    display_df["Value (ILS)"]   = display_df["Value (ILS)"].map(lambda x: f"₪{x:,.0f}")
-    display_df["Daily Chg (%)"] = display_df["Daily Chg (%)"].map(
-        lambda x: f"{x:+.2f}%" if pd.notna(x) else "N/A")
+    display_df["Value (ILS)"]   = display_df["Value (ILS)"].map(lambda x: f"NIS{x:,.0f}")
+    display_df["Daily Chg (%)"] = display_df["Daily Chg (%)"].map(lambda x: f"{x:+.2f}%" if pd.notna(x) else "N/A")
     display_df["P&L (%)"]       = display_df["P&L (%)"].map(lambda x: f"{x:+.2f}%")
     display_df["Weight (%)"]    = display_df["Weight (%)"].map(lambda x: f"{x:.1f}%")
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
     t1, t2, t3 = st.columns(3)
     t1.metric("Total (USD)", f"${total_usd:,.2f}")
-    t2.metric("Total (ILS)", f"₪{total_ils:,.0f}")
+    t2.metric("Total (ILS)", f"NIS{total_ils:,.0f}")
     t3.metric("Daily Change", f"${daily_chg:+,.2f}", f"{daily_chg_p:+.2f}%")
 
     st.divider()
-    st.caption("Prices refresh every 5 min · Yahoo Finance · USD/ILS hourly")
+    st.caption("Prices: Yahoo Finance (5min) | USD/ILS: Bank of Israel API (1hr)")
     if st.button("Refresh Now"):
         st.cache_data.clear()
         st.rerun()
