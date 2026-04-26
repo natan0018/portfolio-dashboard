@@ -455,7 +455,13 @@ def main():
                 return "color:#6b6f82"
             return "color:#3ecf8e" if v>=0 else "color:#f56565"
 
-        styled = ret_df.style.format(lambda v: fmt_pct(v) if v is not None else "N/A")            .applymap(lambda v: color_val(v))
+        def _sc(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)): return "color:#6b6f82"
+            return "color:#3ecf8e" if v >= 0 else "color:#f56565"
+        def _sf(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)): return "N/A"
+            return fmt_pct(v)
+        styled = ret_df.style.format(_sf).map(_sc)
         st.dataframe(styled, use_container_width=True)
 
     # ── TAB 4: DCA ────────────────────────────────────────────────────────────
